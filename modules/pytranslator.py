@@ -102,13 +102,13 @@ class PyTranslator():
                         if len(comment)>0 and comment[0]=="#":
                             # We add an extra indent on code not in a function
                             # since it will go into a function in C++
-                            comment=cline.CPPCodeLine.tab_delimeter+line.replace("#","//",1)
+                            comment=cline.CPPCodeLine.tab_delimiter+line.replace("#","//",1)
                             file.functions["0"].lines[index+1]= cline.CPPCodeLine(index+1,index+1,len(line),0,comment)
         
         # Sort function line dictionaries so output is in proper order
         for function in file.functions.values():
             sorted_lines= {}
-            for line in sorted(function.line.keys()):
+            for line in sorted(function.lines.keys()):
                 sorted_lines[line]= function.lines[line]
             function.lines = sorted_lines
             
@@ -118,7 +118,7 @@ class PyTranslator():
         on declaration
         """
         for file in self.output_files:
-            for cfunction in file.function.values():
+            for cfunction in file.functions.values():
                 for variable in cfunction.variables.values():
                     # Need to include string library for strings in C++
                     if variable.py_var_type[0] == "str":

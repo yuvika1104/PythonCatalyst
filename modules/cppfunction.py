@@ -46,6 +46,8 @@ class CPPFunction():
         # Dictionary of Variable Name : CPPVariable Object
         self.variables = {}
         
+        self.vectors= {}
+        
         # Using a list so type gets updated if more information is found about
         # a related variable
         self.return_type = ["void"]
@@ -116,6 +118,7 @@ class CPPFunction():
         # append to the string we will return
         for line in self.lines.values():
             return_str += line.get_formatted_code_line() + "\n"
-
+        if(self.name=="0"):
+            return_str+="\n\treturn 0;\n"
         # Add a closing bracket for the end of the function
         return return_str + "}"

@@ -45,7 +45,7 @@ class CPPFile():
         return_str= ""
         
         for file in self.includes:
-            return_str+= "include <"+ file + ">\n"
+            return_str+= "#include <"+ file + ">\n"
             
         return_str += "\n"
         

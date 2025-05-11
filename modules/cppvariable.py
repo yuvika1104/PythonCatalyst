@@ -30,6 +30,5 @@ class CPPVariable():
         self.name = name
         self.line_num= line_num
         
-        # We use a list here to get a mutable type so that a change to one
-        # linked variable will reflect the change across all objects
+        # We use a list here to get a mutable type
         self.py_var_type = py_var_type
