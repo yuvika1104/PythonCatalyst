@@ -15,3 +15,19 @@ while True:
         print(index)
         index = index + 1   # increment index to avoid infinite loop
         continue
+i=0
+for i in 5:
+    print(i)
+    
+a=[1,2,3,4,5]
+
+for i in range(len(a)):
+    print(i)
+    
+for i in range('a','g',2):
+    print(i)
+    
+s='abcdefg'
+
+for i in range(len(s)):
+    print(s[i])

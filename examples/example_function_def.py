@@ -8,7 +8,6 @@ def add(val_a, val_b):
     :param val_b: Second value to add
     :return: The sum of a and b
     """
-    c=[1,2,3]
     return val_a + val_b
 
 

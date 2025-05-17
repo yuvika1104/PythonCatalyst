@@ -6,6 +6,7 @@ from modules import cppcodeline as cline
 from modules import pycatalystexceptions as pcex
 from modules import portedfunctions as pf
 from modules import cppvector as cvec
+from modules import cpptuple as ctup
 
 class PyAnalyzer():
     """
@@ -25,7 +26,7 @@ class PyAnalyzer():
                     "Or": " || "
                     }
     # Tuple of all functions we have a special conversion from python to C++
-    ported_functions = ("print", "sqrt")
+    ported_functions = ("print", "sqrt", "pow","log","len")
     
     
     # Python Comparison operators translated to C++ operators
@@ -650,12 +651,21 @@ class PyAnalyzer():
             return
         if(assign_type[0]=="List"):
             self.output_files[file_index].add_include_file("vector")
-            vector = cvec.CPPVector(name=var_name, element_type=assign_type[1], elements=assign_str)
+            vector = cvec.CPPVector(name=var_name, py_var_type=assign_type[1], elements=assign_str)
             function_ref.vectors[var_name] = vector
             code_str= vector.declaration()
             c_code_line = cline.CPPCodeLine(node.lineno, node.end_lineno,
                                                 node.end_col_offset, indent,
                                                 code_str)
+        elif(assign_type[0]=="Tuple"):
+            self.output_files[file_index].add_include_file("tuple")
+            tuple = ctup.CPPTuple(name=var_name, elements=assign_str,element_types=assign_type[1])
+            function_ref.tuples[var_name] = tuple
+            code_str= tuple.declaration()
+            c_code_line = cline.CPPCodeLine(node.lineno, node.end_lineno,
+                                                node.end_col_offset, indent,
+                                                code_str)
+            
         else:
             
             # Find if name exists in context
@@ -815,7 +825,25 @@ class PyAnalyzer():
                 raise pcex.TranslationNotSupported("TODO: Can't square more than 1 item")
             return_str = pf.sqrt_translation(args)
             return_type = ["float"]
-            self.output_files[file_index].add_include_file("math.h")
+            self.output_files[file_index].add_include_file("cmath")
+            
+        elif function == "pow":
+            if len(args) != 2:
+                raise pcex.TranslationNotSupported("TODO: Can't find power using less than 2 or more than 2 items")
+            return_str = pf.pow_translation(args)
+            return_type = ["float"]
+            self.output_files[file_index].add_include_file("cmath")
+        elif function == "log":
+            if len(args) > 2:
+                raise pcex.TranslationNotSupported("TODO: Can't find log using  more than 2 items")
+            return_str = pf.log_translation(args)
+            return_type = ["float"]
+            self.output_files[file_index].add_include_file("cmath")
+        elif function == "len":
+            if len(args)>1:
+                raise pcex.TranslationNotSupported("TODO: Can't find length using  more than 1 item")
+            return_str = pf.len_translation(args,arg_types)
+            return_type = ["int"]
 
         return return_str, return_type
     
@@ -1186,6 +1214,8 @@ class PyAnalyzer():
         
         elif node_type is ast.List:
             return self.parse_List(node,file_index,function_key)
+        elif node_type is ast.Tuple:
+            return self.parse_Tuple(node,file_index,function_key)
         elif node_type is ast.Subscript:
             try:
                 return self.parse_Subscript(node,file_index,function_key)
@@ -1229,6 +1259,10 @@ class PyAnalyzer():
 
         elif name in function_ref.variables:
             return function_ref.variables[name].py_var_type
+        elif name in function_ref.vectors:
+            return function_ref.vectors[name].py_var_type
+        elif name in function_ref.tuples:
+            return ['Tuple']
 
         else:
             raise pcex.VariableNotFound()
@@ -1261,12 +1295,12 @@ class PyAnalyzer():
         all_same_type = all(t == common_type for t in types)
         
         if all_same_type:
-            element_type=cvar.CPPVariable.types[common_type].strip()
+            py_var_type=cvar.CPPVariable.types[common_type].strip()
         else:
             raise pcex.TranslationNotSupported("TODO : Hetrogeneous Lists Not Supported")
 
         
-        return values,["List",element_type]
+        return values,["List",py_var_type]
     
     
     def parse_Subscript(self, node, file_index, function_key):
@@ -1285,22 +1319,191 @@ class PyAnalyzer():
             How much indentation a line should have.
         """
         func_ref = self.output_files[file_index].functions[function_key]
-
-        list_name = func_ref.vectors.get(node.value.id)
-        if list_name is None:
+        type="vector"
+        name = func_ref.vectors.get(node.value.id)
+        if name is None:
+            # Check in variables
+            name = func_ref.tuples.get(node.value.id)
+            type="tuple"
+        if name is None:
+            # Check in variables
+            name = func_ref.variables.get(node.value.id)
+            type="variable"
+        if name is None:
+            # Check in parameters
+            name = func_ref.parameters.get(node.value.id)
+            type="parameter"
+        if name is None:
+            # Raise error if not found in any collection
             raise pcex.VariableNotFound()
 
         index = self.recurse_operator(node.slice, file_index, function_key)[0]
         # print(index)
         if index is None:
             raise pcex.TranslationNotSupported("TODO: Range query on vector")
-
-        
+        if type=="tuple":
+            access_code= f"std::get<{index}>({name.name})"
+            var_type= name.element_type_list[int(index)]
+        else:
         # Generate the C++ code for element access
-        access_code = f"{list_name.name}[{index}]"
+            access_code = f"{name.name}[{index}]"
+            var_type= name.py_var_type
         
         # print(access_code,list_name.element_type)
-        return access_code,list_name.element_type
+        return access_code,var_type
+
+
+    def handle_range_call(self, node, file_index, function_key):
+        """
+        Extracts the initial limit, final limit, and increment from a range() call.
+
+        Parameters
+        ----------
+        node : ast.Call
+            The ast.Call node representing a range() function.
+        file_index : int
+            Index of the file in the output_files list.
+        function_key : str
+            Key to find the correct function in the function dictionary.
+
+        Returns
+        -------
+        tuple
+            (start, end, step) values extracted from the range() call.
+        """
+        args = []
+        for arg in node.args:
+            operator_result = self.recurse_operator(arg, file_index, function_key)
+            # print(operator_result)
+            if operator_result[1][0]!= 'int':
+                raise pcex.TranslationNotSupported("Only integer supported")
+            args.append(operator_result[0])
+    
+        # Default values for range
+        start, end, step = "0", None, "1"
+
+        # Determine the number of arguments and assign values accordingly
+        if len(args) == 1:
+            end = args[0]
+        elif len(args) == 2:
+            start, end = args
+        elif len(args) == 3:
+            start, end, step = args
+
+        return start, end, step
+
+    def parse_For(self, node, file_index, function_key, indent):
+        """
+        Handles parsing an ast.For node with numerical range-based loops.
+
+        Parameters
+        ----------
+        node : ast.For
+            The ast.For node to be translated.
+        file_index : int
+            Index of the file to write to in the output_files list.
+        function_key : str
+            Key to find the correct function in the function dictionary.
+        indent : int
+            How much indentation a line should have.
+        """
+        func_ref = self.output_files[file_index].functions[function_key]
+
+        try:
+            declare=""
+        # Ensure iterator is a range() call
+            if isinstance(node.iter, ast.Call) and isinstance(node.iter.func, ast.Name) and node.iter.func.id == "range":
+                start, end, step = self.handle_range_call(node.iter, file_index, function_key)
+            
+                # target_st = node.target.id 
+                # if target_st in func_ref.variables:
+                #     pass
+                # else:
+                #     # Register the new variable
+                #     declare=indent*cline.CPPCodeLine.tab_delimiter + "int "+target_st+" = 0"
+                #     target_var = cvar.CPPVariable(target_st, node.lineno, ['int'])
+                #     func_ref.variables[target_var.name] = target_var
+                # Convert the target variable
+                target_str = self.recurse_operator(node.target, file_index, function_key)[0]
+            
+                # Construct the C++ for loop header
+                loop_header = f"for ({target_str} = {start}; {target_str} < {end}; {target_str} += {step})\n" \
+                          + indent * cline.CPPCodeLine.tab_delimiter + "{"
+                                                            
+            elif isinstance(node.iter, ast.Constant) and isinstance(node.iter.value, int):
+                
+                end = str(node.iter.value)
+                # target_st = node.target.id 
+                # if target_st in func_ref.variables:
+                #     pass
+                # else:
+                #     # Register the new variable
+                #     target_var = cvar.CPPVariable(target_st, node.lineno, ['int'])
+                #     declare=indent*cline.CPPCodeLine.tab_delimiter + "int "+target_st+" = 0"
+                #     func_ref.variables[target_var.name] = target_var
+                    
+                target_str = self.recurse_operator(node.target, file_index, function_key)[0]
+                loop_header = f"for ({target_str} = 0; {target_str} < {end}; {target_str}++)\n" \
+                          + indent * cline.CPPCodeLine.tab_delimiter + "{"
+                          
+            else:
+                self.parse_unhandled(
+                node,
+                file_index,
+                function_key,
+                indent,
+                reason="Unsupported iterator type. Only range() and single integers are supported."
+                )
+                return
+            
+            func_ref.lines[node.lineno] = cline.CPPCodeLine(
+                    node.lineno, node.end_lineno, node.end_col_offset, indent,loop_header
+            )
+
+                # Process the body of the for loop
+            self.analyze_tree(node.body, file_index, function_key, indent + 1)
+
+                # Closing the body of the for loop
+            func_ref.lines[node.body[-1].end_lineno].code_str += "\n" \
+                                                                 + indent * cline.CPPCodeLine.tab_delimiter \
+                                                            + "}"
+        except pcex.TranslationNotSupported as ex:
+            self.parse_unhandled(node, file_index, function_key, indent, ex.reason)
+            return
+        return
+    
+    def parse_Tuple(self, node, file_index, function_key):
+        """
+        Handles parsing an ast.Tuple node into a CPPTuple.
+
+        Parameters
+        ----------
+        node : ast.Tuple
+            The ast.Tuple node to be translated.
+        file_index : int
+            Index of the file to write to in the output_files list.
+        function_key : str
+            Key used to find the correct function in the function dictionary.
+
+        Returns
+        -------
+        tuple
+            A tuple containing the values and metadata for the C++ tuple.
+        """
+        func_ref = self.output_files[file_index].functions[function_key]
+
+        # Parse elements of the tuple
+        elements = [self.recurse_operator(el, file_index, function_key) for el in node.elts]
+        
+        # Extract data types and values
+        values = [el[0] for el in elements]
+        types = [el[1] for el in elements]
+        
+
+        # Return the tuple values and their types
+        return values, ["Tuple", types]
+        
+
 
     
     

@@ -124,7 +124,7 @@ class PyTranslator():
                     if variable.py_var_type[0] == "str":
                         file.add_include_file("string")
                         
-                    # Prepend lne with variable type to apply type
+                    # Prepend line with variable type to apply type
                     cfunction.lines[variable.line_num].code_str \
                         = cvar.CPPVariable.types[variable.py_var_type[0]] + cfunction.lines[variable.line_num].code_str
     

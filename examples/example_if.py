@@ -1,4 +1,4 @@
-from math import sqrt
+from math import sqrt, log
 
 # Example script demonstrating conversion of if statements
 x = True
@@ -20,6 +20,7 @@ if True:
     if b < a:
         if b < 0:
             print("b is negative")
+            
 
 # Conditional supports function calls
 if sqrt(b) > a:
@@ -29,8 +30,10 @@ if sqrt(b) > a:
 if a is b:
     print("a is b")
 
-# Lists currently not supported during translation
 l = [1, 2, 3]
-
 if a in l:
     print("A is in l")
+    
+
+
+

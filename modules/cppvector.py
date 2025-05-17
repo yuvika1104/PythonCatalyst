@@ -1,8 +1,9 @@
+from modules import cppvariable as cvar
 class CPPVector:
     """
     Represents a C++ vector and provides methods to handle vector operations.
     """
-    def __init__(self, name, element_type="auto", elements=None):
+    def __init__(self, name, py_var_type="auto", elements=None):
         """
         Initialize a CPPVector.
 
@@ -16,7 +17,7 @@ class CPPVector:
             Initial elements for the vector.
         """
         self.name = name
-        self.element_type = [element_type]
+        self.py_var_type = [py_var_type]
         self.elements = elements or []
 
     def declaration(self):
@@ -29,7 +30,7 @@ class CPPVector:
             The C++ declaration as a string.
         """
         elements_str = ", ".join(map(str, self.elements))
-        return f"std::vector<{self.element_type[0]}> {self.name} = {{ {elements_str} }};"
+        return f"std::vector<{cvar.CPPVariable.types[self.py_var_type[0]]}> {self.name} = {{ {elements_str} }};"
 
     def access_element(self, index):
         """

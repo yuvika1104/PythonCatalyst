@@ -47,6 +47,7 @@ class CPPFunction():
         self.variables = {}
         
         self.vectors= {}
+        self.tuples={}
         
         # Using a list so type gets updated if more information is found about
         # a related variable
