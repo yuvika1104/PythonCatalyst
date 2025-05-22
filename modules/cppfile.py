@@ -17,6 +17,7 @@ class CPPFile():
         
         # Stored as a dictionary of {Function Name: CPPFunction object}
         self.functions = {}
+        self.classes = {}
         
         self.filename = filename
         
@@ -32,33 +33,46 @@ class CPPFile():
         """
         if file not in self.includes:
             self.includes.append(file)
+    def add_class(self, cpp_class):
+        """
+        Adds a CPPClass to the file.
+
+        Parameters
+        ----------
+        cpp_class : CPPClass
+            The class to add.
+        """
+        self.classes[cpp_class.name] = cpp_class
             
     def get_formatted_file_text(self):
         """
         Generates the text representing the entire C++ file
-
-        Returns
-        -------
-        return_str : str
-            The text of the converted C++ file
         """
-        return_str= ""
+        return_str = ""
         
+        # Includes
         for file in self.includes:
-            return_str+= "#include <"+ file + ">\n"
+            return_str += "#include <" + file + ">\n"
+        
+        # Forward declarations for classes
+        for c in self.classes.values():
+            return_str += c.get_forward_declaration() + "\n"
             
+        # Forward declarations for functions (skip class methods and main)
+        for function_key in self.functions:
+            if "::" not in function_key and function_key != "0":
+                return_str += self.functions[function_key].get_forward_declaration() + ";\n"
         return_str += "\n"
+
+        # Class definitions
+        for c in self.classes.values():
+            return_str += c.get_formatted_class_text() + "\n\n"
         
-        # Now put in forward declarations
-        # Skip main since it doesn't need a forward declaration
-        for function_key in list(self.functions.keys())[1:]:
-            return_str+= self.functions[function_key].get_forward_declaration() + ";\n"
-            
-        return_str +="\n"
-        
-        # Now we put in all of the functions for the file
-        for function in self.functions.values():
-            return_str +=function.get_formatted_function_text() + "\n\n"
+        # Function definitions (including main)
+        for function_key in self.functions:
+            if "::" not in function_key:
+                func = self.functions[function_key]
+                return_str += func.get_formatted_function_text() + "\n\n"
             
         return return_str
         

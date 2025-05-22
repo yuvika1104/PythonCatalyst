@@ -9,8 +9,9 @@ z = False
 
 a = "Hello!"
 
-
+c= 2**4
 b = [1,2,3]
+b.append(4)
 x = b[0]
 
 # Variable reassignment

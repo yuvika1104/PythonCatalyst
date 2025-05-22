@@ -7,6 +7,7 @@ from modules import pycatalystexceptions as pcex
 from modules import portedfunctions as pf
 from modules import cppvector as cvec
 from modules import cpptuple as ctup
+from modules import cppclass as cclass
 
 class PyAnalyzer():
     """
@@ -26,7 +27,7 @@ class PyAnalyzer():
                     "Or": " || "
                     }
     # Tuple of all functions we have a special conversion from python to C++
-    ported_functions = ("print", "sqrt", "pow","log","len")
+    ported_functions = ("print", "sqrt", "pow","log","len","append")
     
     
     # Python Comparison operators translated to C++ operators
@@ -76,67 +77,100 @@ class PyAnalyzer():
     def pre_analysis(self, tree, file_index, indent):
         """
         Performs pre-analysis on the script by going through and translating
-        all functions that have been declared in this script
-
-        Parameters
-        ----------
-        tree : List of ast nodes
-            List containing ast nodes from ast.parse
-        file_index : int
-            Index of the file to write to in the output_files list
-        indent : int
-            How much indentation a line should have
+        all classes and standalone functions declared in this script.
         """
-        # First work through function declarations so we know what calls go to
-        # self written functions
+        # First, process all class definitions to register classes and their methods
         for node in tree:
-            if node.__class__ is ast.FunctionDef:
-                self.parse_function_header(node,file_index)
-        
-        # Now we'll parse the bodies of the functions
+            if node.__class__ is ast.ClassDef:
+                self.parse_ClassDef(node, file_index, "-1", indent)
+
+        # Collect class method names to filter them out
+        class_method_names = set()
+        for cpp_class in self.output_files[file_index].classes.values():
+            class_method_names.update(cpp_class.methods.keys())
+
+        # Then, process standalone function declarations (skipping class methods)
         for node in tree:
-            if node.__class__ is ast.FunctionDef:
+            if node.__class__ is ast.FunctionDef and node.name not in class_method_names:
+                self.parse_function_header(node, file_index)
+
+        # Finally, parse the bodies of standalone functions
+        for node in tree:
+            if node.__class__ is ast.FunctionDef and node.name not in class_method_names:
                 self.analyze_tree(node.body, file_index, node.name, indent)
                 
-    def parse_function_header(self,node,file_index):
+            
+    def parse_ClassDef(self, node, file_index, function_key, indent):
         """
-        Parses an ast.FunctionDef node and determines the function name and
-        parameters and stores this information in a CPPFunction object which
-        is stored in the corresponding CPPFile object
+        Handles parsing an ast.ClassDef node.
 
         Parameters
         ----------
-        node : ast.FunctionDef
-            Node containing the function to parse a header from
+        node : ast.ClassDef
+            The ast.ClassDef node to be translated.
         file_index : int
-            Index of the file to write to in the output_files list
+            Index of the file to write to in the output_files list.
+        function_key : str
+            Key used to find the correct function in the function dictionary.
+        indent : int
+            How much indentation a line should have.
+        """
+        # Extract base classes
+        bases = [base.id for base in node.bases if isinstance(base, ast.Name)]
+        if len(node.bases) != len(bases):
+            self.parse_unhandled(node, file_index, function_key, indent,
+                                "TODO: Only simple base classes (by name) are supported")
+            return
+        
+        # Create CPPClass object
+        cpp_class = cclass.CPPClass(node.name, node.lineno, node.end_lineno, bases)
+        self.output_files[file_index].add_class(cpp_class)
+
+        # Parse class body for methods and attributes
+        for item in node.body:
+            if isinstance(item, ast.FunctionDef):
+                # Parse method headers
+                self.parse_function_header(item, file_index, class_name=node.name)
+            elif isinstance(item, ast.Assign):
+                # Handle instance variables (e.g., self.x = 5 in __init__)
+                self.parse_class_attribute(item, file_index, node.name, indent)
+            else:
+                self.parse_unhandled(item, file_index, function_key, indent,
+                                    "TODO: Only methods and assignments supported in classes")
+
+        # Parse method bodies
+        for item in node.body:
+            if isinstance(item, ast.FunctionDef):
+                self.analyze_tree(item.body, file_index, f"{node.name}::{item.name}", indent + 1)
+                
+    def parse_function_header(self, node, file_index, class_name=None):
+        """
+        Parses an ast.FunctionDef node and determines the function name and
+        parameters and stores this information in a CPPFunction object.
         """
         func_ref = self.output_files[file_index].functions
+        func_key = f"{class_name}::{node.name}" if class_name else node.name
+        # Skip if function is already registered
+        if func_key in func_ref:
+            print(f"Warning: Skipping duplicate function {func_key}")
+            return
+
         args = node.args
-        
-        # Verify the function can actually be converted to C++
         if len(args.kw_defaults) > 0 or len(args.kwonlyargs) > 0 \
             or len(args.posonlyargs) > 0 or args.kwarg is not None \
                 or args.vararg is not None:
             return
-        
-        # Default values not directly linked, but they are in order, so we
-        # figure out the index offset of when we should begin applying default
-        # values to parameters
+
         default_args_index = len(args.args) - len(args.defaults)
         params = {}
-        
+
         for index in range(len(args.args)):
             name = args.args[index].arg
-
-            # Once index has reached the offset index, we need to start
-            # applying default values
+            if index == 0 and name == "self" and class_name:
+                continue
             if index >= default_args_index:
-                default = args.defaults[index-default_args_index]
+                default = args.defaults[index - default_args_index]
                 default_type = [type(default.value).__name__]
-
-                # Special handler for strings since their value needs to be
-                # wrapped in quotes
                 if default_type[0] == "str":
                     params[name] = cvar.CPPVariable(name + "=\"" + default.value + "\"",
                                                     -1, default_type)
@@ -146,8 +180,71 @@ class PyAnalyzer():
             else:
                 params[name] = cvar.CPPVariable(name, -1, ["auto"])
 
-        func_ref[node.name] = cfun.CPPFunction(node.name, node.lineno,
-                                               node.end_lineno, params)
+        if node.name =="__init__":
+            func = cfun.CPPFunction(class_name, node.lineno, node.end_lineno, params)
+            func.return_type[0]="constructor"
+        else:
+            func = cfun.CPPFunction(node.name, node.lineno, node.end_lineno, params)
+        if class_name:
+            self.output_files[file_index].classes[class_name].add_method(func)
+            func_ref[func_key] = func
+        else:
+            # print(f"Registering standalone function: {node.name}")
+            func_ref[node.name] = func
+            
+    def parse_class_attribute(self, node, file_index, class_name, indent):
+        """
+        Parses assignments that define class attributes (e.g., self.x = 5).
+
+        Parameters
+        ----------
+        node : ast.Assign
+            The ast.Assign node to be translated.
+        file_index : int
+            Index of the file to write to in the output_files list.
+        class_name : str
+            Name of the class where the attribute is defined.
+        indent : int
+            How much indentation a line should have.
+        """
+        if len(node.targets) != 1 or not isinstance(node.targets[0], ast.Attribute) \
+                or not isinstance(node.targets[0].value, ast.Name) or node.targets[0].value.id != "self":
+            self.parse_unhandled(node, file_index, f"{class_name}::__init__", indent,
+                                "TODO: Only self.<attribute> assignments are supported in classes")
+            return
+
+        attr_name = node.targets[0].attr
+        try:
+            assign_str, assign_type = self.recurse_operator(node.value, file_index, f"{class_name}::__init__")
+        except pcex.TranslationNotSupported as ex:
+            self.parse_unhandled(node, file_index, f"{class_name}::__init__", indent, ex.reason)
+            return
+        # print(assign_str,assign_type)
+        class_ref=self.output_files[file_index].classes[class_name]
+        code_str=None
+        if assign_type[0] == "List":
+            self.output_files[file_index].add_include_file("vector")
+            vector = cvec.CPPVector(name=attr_name, py_var_type=assign_type[1], elements=assign_str)
+            class_ref.vectors[attr_name] = vector
+            
+            
+        elif assign_type[0] == "Tuple":
+            self.output_files[file_index].add_include_file("tuple")
+            tuple = ctup.CPPTuple(name=attr_name, elements=assign_str, element_types=assign_type[1])
+            class_ref.tuples[attr_name] = tuple
+            
+        else:
+        # Create and add attribute to class
+            c_var = cvar.CPPVariable(attr_name, node.lineno, assign_type)
+            class_ref.add_attribute(c_var)
+            code_str = f"this->{attr_name} = {assign_str};"
+
+        # If in __init__, add assignment to the method
+        init_key = f"{class_name}::__init__"
+        if init_key in self.output_files[file_index].functions and code_str is not None:
+            
+            self.output_files[file_index].functions[init_key].lines[node.lineno] = \
+                cline.CPPCodeLine(node.lineno, node.end_lineno, node.end_col_offset, indent, code_str)
     
     
     def analyze_tree(self, tree, file_index, function_key, indent):
@@ -170,7 +267,7 @@ class PyAnalyzer():
         for node in tree:
             # Skipping function definitions as we handled them during
             # pre-analysis
-            if node.__class__ is not ast.FunctionDef:
+            if node.__class__ not in (ast.FunctionDef, ast.ClassDef):
                 # Using strategy found in ast.py built-in module
                 handler_name = "parse_" + node.__class__.__name__
                 # Will find if the function called handler_name exists,
@@ -259,24 +356,7 @@ class PyAnalyzer():
         pass          
     
     # Definitions
-    def parse_ClassDef(self, node, file_index, function_key, indent):
-        """
-        Handles parsing an ast.ClassDef node. We don't translate this
-        so we just pass on calls to it
 
-        Parameters
-        ----------
-        node : ast.ClassDef
-            The ast.ClassDef node to be translated
-        file_index : int
-            Index of the file to write to in the output_files list
-        function_key : str
-            Key used to find the correct function in the function dictionary
-        indent : int
-            How much indentation a line should have
-        """
-        pass
-    
     # Control Statements
     def parse_If(self, node, file_index, function_key, indent, if_str="if"):
         """
@@ -611,25 +691,25 @@ class PyAnalyzer():
                                                               indent, return_str)
         
         
-    def parse_Assign (self, node, file_index, function_key,indent):
+    def parse_Assign(self, node, file_index, function_key, indent):
         """
         Handles parsing an ast.Assign node.
 
         Parameters
         ----------
         node : ast.Assign
-            The ast.Assign node to be translated
+            The ast.Assign node to be translated.
         file_index : int
-            Index of the file to write to in the output_files list
+            Index of the file to write to in the output_files list.
         function_key : str
-            Key used to find the correct function in the function dictionary
+            Key used to find the correct function in the function dictionary.
         indent : int
-            How much indentation a line should have
+            How much indentation a line should have.
 
         Raises
         ------
         TranslationNotSupported
-            If the python code cannot be directly translated
+            If the python code cannot be directly translated.
         """
         function_ref = self.output_files[file_index].functions[function_key]
 
@@ -638,65 +718,78 @@ class PyAnalyzer():
             self.parse_unhandled(node, file_index, function_key, indent,
                                  "TODO: Unable to translate chained assignment")
             return
-        
+
+        # Check if this is a class attribute assignment (self.<attr>)
+        if isinstance(node.targets[0], ast.Attribute) and \
+           isinstance(node.targets[0].value, ast.Name) and \
+           node.targets[0].value.id == "self" and \
+           "::" in function_key:
+            # Extract class name from function_key (e.g., "MyClass::method")
+            class_name = function_key.split("::")[0]
+            if class_name in self.output_files[file_index].classes:
+                self.parse_class_attribute(node, file_index, class_name, indent)
+                return
+    
+
+        # Handle regular variable assignment
+        if not isinstance(node.targets[0], ast.Name):
+            self.parse_unhandled(node, file_index, function_key, indent,
+                                 "TODO: Only simple variable or self.<attr> assignments supported")
+            return
+
         var_name = node.targets[0].id
+        # print(var_name)
         try:
             assign_str, assign_type = self.recurse_operator(node.value,
                                                             file_index,
                                                             function_key)
-            # print(assign_str,assign_type)
         except pcex.TranslationNotSupported as ex:
             self.parse_unhandled(node, file_index, function_key, indent,
                                  ex.reason)
             return
-        if(assign_type[0]=="List"):
+        if assign_type[0] == "List":
             self.output_files[file_index].add_include_file("vector")
             vector = cvec.CPPVector(name=var_name, py_var_type=assign_type[1], elements=assign_str)
             function_ref.vectors[var_name] = vector
-            code_str= vector.declaration()
+            code_str = vector.declaration()
             c_code_line = cline.CPPCodeLine(node.lineno, node.end_lineno,
-                                                node.end_col_offset, indent,
-                                                code_str)
-        elif(assign_type[0]=="Tuple"):
+                                            node.end_col_offset, indent,
+                                            code_str)
+        elif assign_type[0] == "Tuple":
             self.output_files[file_index].add_include_file("tuple")
-            tuple = ctup.CPPTuple(name=var_name, elements=assign_str,element_types=assign_type[1])
+            tuple = ctup.CPPTuple(name=var_name, elements=assign_str, element_types=assign_type[1])
             function_ref.tuples[var_name] = tuple
-            code_str= tuple.declaration()
+            code_str = tuple.declaration()
             c_code_line = cline.CPPCodeLine(node.lineno, node.end_lineno,
-                                                node.end_col_offset, indent,
-                                                code_str)
-            
+                                            node.end_col_offset, indent,
+                                            code_str)
         else:
-            
             # Find if name exists in context
             try:
                 py_var_type = self.find_var_type(var_name,
-                                             file_index,
-                                             function_key)
-
+                                                 file_index,
+                                                 function_key)
                 # Verify types aren't changing or we aren't losing precision
                 if py_var_type[0] != assign_type[0] \
-                    and (py_var_type[0] != "float" and assign_type[0] != "int"):
-                # Can't do changing types in C++
+                   and (py_var_type[0] != "float" or assign_type[0] != "int"):
                     self.parse_unhandled(node, file_index, function_key, indent,
-                                     "TODO: Refactor for C++. Variable types "
-                                     "cannot change or potential loss of "
-                                     "precision occurred")
+                                         "TODO: Refactor for C++. Variable types "
+                                         "cannot change or potential loss of "
+                                         "precision occurred")
                     return
                 else:
                     code_str = var_name + " = " + str(assign_str) + ";"
                     c_code_line = cline.CPPCodeLine(node.lineno, node.end_lineno,
-                                                node.end_col_offset, indent,
-                                                code_str)
+                                                    node.end_col_offset, indent,
+                                                    code_str)
             except pcex.VariableNotFound:
                 # Declaration
-                # print(var_name,assign_type)
                 c_var = cvar.CPPVariable(var_name, node.lineno, assign_type)
                 function_ref.variables[var_name] = c_var
                 code_str = var_name + " = " + str(assign_str) + ";"
                 c_code_line = cline.CPPCodeLine(node.lineno, node.end_lineno,
-                                            node.end_col_offset, indent,
-                                            code_str)
+                                                node.end_col_offset, indent,
+                                                code_str)
 
         function_ref.lines[node.lineno] = c_code_line
         
@@ -707,81 +800,90 @@ class PyAnalyzer():
         Parameters
         ----------
         node : ast.Call
-            The ast.Call node to be translated
+            The ast.Call node to be translated.
         file_index : int
-            Index of the file to write to in the output_files list
+            Index of the file to write to in the output_files list.
         function_key : str
-            Key used to find the correct function in the function dictionary
+            Key used to find the correct function in the function dictionary.
 
         Returns
         -------
         return_str : str
-            The call represented as a string
+            The call represented as a string.
         return_type : list of str
-            The return type of the call
+            The return type of the call.
 
         Raises
         ------
         TranslationNotSupported
-            If the python code cannot be directly translated
+            If the python code cannot be directly translated.
         """
-        if node.func.__class__ is not ast.Name:
-            raise pcex.TranslationNotSupported("TODO: Not a valid call")
-        
-        # Get a reference to current function to shorten code width
         func_ref = self.output_files[file_index].functions
-        func_name = node.func.id
-        
-        # Ensure this is a valid function call we can use
-        if func_name not in cvar.CPPVariable.types \
-            and func_name not in func_ref \
-                and func_name not in self.ported_functions:
-            raise pcex.TranslationNotSupported("TODO: Call to function not in scope")
 
-        # We track the types passed in to help update parameter types when
-        # functions get called
-        arg_types = []
+        # Process arguments and their types once for all cases
         arg_list = []
+        arg_types = []
         for arg in node.args:
-            arg_str, arg_type = self.recurse_operator(arg,
-                                                      file_index,
-                                                      function_key)
+            arg_str, arg_type = self.recurse_operator(arg, file_index, function_key)
             arg_list.append(arg_str)
             arg_types.append(arg_type)
-            
-        # Check if casting or normal function call
+
+        # Handle method calls (e.g., my_list.append(item))
+        if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name):
+            var_name = node.func.value.id
+            method_name = node.func.attr
+            try:
+                var_type = self.find_var_type(var_name, file_index, function_key)
+                if method_name == "append" :
+                # Find the vector in function or class scope
+                    vector = func_ref[function_key].vectors.get(var_name)
+                    if not vector and '::' in function_key:
+                        class_name = function_key.split('::')[0]
+                        vector = self.output_files[file_index].classes[class_name].vectors.get(var_name)
+                    if not vector:
+                        raise pcex.TranslationNotSupported(f"TODO: {var_name} is not a recognized vector")
+                
+                    # Ensure argument type matches vector's element type
+                    if len(arg_types) != 1 or arg_types[0][0] != vector.py_var_type[0]:
+                        raise pcex.TranslationNotSupported("TODO: append expects one argument of matching vector element type")
+                
+                    self.output_files[file_index].add_include_file("vector")
+                    # Delegate to parse_ported_function with vector context
+                    return_str,return_type=self.parse_ported_function(file_index, function_key, method_name, arg_list, arg_types)
+                    return_str=f"{var_name}.{return_str}"
+                    return return_str,return_type
+                else:
+                    raise pcex.TranslationNotSupported(f"TODO: Method {method_name} on {var_name} not supported")
+            except pcex.VariableNotFound:
+                raise pcex.TranslationNotSupported(f"TODO: Variable {var_name} not found")
+
+        # Handle regular function calls or casts
+        if not isinstance(node.func, ast.Name):
+            raise pcex.TranslationNotSupported("TODO: Not a valid call")
+
+        func_name = node.func.id
+        if func_name not in cvar.CPPVariable.types and func_name not in func_ref and func_name not in self.ported_functions:
+            raise pcex.TranslationNotSupported(f"TODO: Call to function {func_name} not in scope")
+
+        # Handle type casting (e.g., int(), str())
         if func_name in cvar.CPPVariable.types:
-            # Trim the extra space since we are performing a cast rather than
-            # a variable declaration
-            if (func_name == "str"):
-                return_str = "std::to_string("
+            if func_name == "str":
                 self.output_files[file_index].add_include_file("string")
+                return_str = f"std::to_string({', '.join(arg_list)})"
                 return_type = ["str"]
             else:
-                return_str = "(" + cvar.CPPVariable.types[func_name][:-1] + ")("
+                return_str = f"({cvar.CPPVariable.types[func_name][:-1]})({', '.join(arg_list)})"
                 return_type = [func_name]
+        # Handle defined functions
         elif func_name in func_ref:
-            return_str = func_name + "("
-
-            # Now we try to update the parameter types if applicable
             function = func_ref[func_name]
-            for param, passed_type in zip(function.parameters.values(),
-                                          arg_types):
-                param.py_var_type[0] = self.type_precedence(param.py_var_type,
-                                                         passed_type)[0]
+            for param, passed_type in zip(function.parameters.values(), arg_types):
+                param.py_var_type[0] = self.type_precedence(param.py_var_type, passed_type)[0]
+            return_str = f"{func_name}({', '.join(arg_list)})"
             return_type = function.return_type
-
-        elif func_name in self.ported_functions:
-            return self.parse_ported_function(file_index, function_key,
-                                              func_name, arg_list, arg_types)
-
+        # Handle ported functions
         else:
-            raise pcex.TranslationNotSupported("TODO: Call to function not in scope")
-
-        # Finish generating function call with parameters inserted
-        for arg in arg_list:
-            return_str += arg + ", "
-        return_str = return_str[:-2] + ")"
+            return self.parse_ported_function(file_index, function_key, func_name, arg_list, arg_types)
 
         return return_str, return_type
     
@@ -844,6 +946,10 @@ class PyAnalyzer():
                 raise pcex.TranslationNotSupported("TODO: Can't find length using  more than 1 item")
             return_str = pf.len_translation(args,arg_types)
             return_type = ["int"]
+        elif function =="append":
+            return_str= pf.append_translation(args,arg_types)
+            return_type=arg_types[0]
+
 
         return return_str, return_type
     
@@ -990,7 +1096,7 @@ class PyAnalyzer():
         operator = node.op.__class__.__name__
         if operator in PyAnalyzer.operator_map:
             if operator == "Pow":
-                self.output_files[file_index].add_include_file("math.h")
+                self.output_files[file_index].add_include_file("cmath")
                 return_str = "pow(" + left_str + ", " + right_str + ")"
                 return_type = ["float"]
 
@@ -1221,8 +1327,11 @@ class PyAnalyzer():
                 return self.parse_Subscript(node,file_index,function_key)
             except pcex.VariableNotFound:
                 raise pcex.TranslationNotSupported("TODO: Variable used before declaration")
-
-
+        elif node_type is ast.Attribute:
+            try:
+                return self.parse_Attribute(node, file_index,function_key)
+            except pcex.VariableNotFound:
+                raise pcex.TranslationNotSupported("TODO:Class Variable used before declaration")
         else:
             # Anything we don't handle
             raise pcex.TranslationNotSupported()
@@ -1252,20 +1361,50 @@ class PyAnalyzer():
         VariableNotFound
             If the variable can't be found in the given context
         """
-        function_ref = self.output_files[file_index].functions[function_key]
+        if '::' in function_key:
+            parts = function_key.split('::')
+            if len(parts) != 2:
+                raise pcex.TranslationNotSupported("function_key must be in format 'ClassName.method_name'")
+    
+            class_name = parts[0]
+            func_name = parts[1]
+            function_ref = self.output_files[file_index].functions[function_key]
+            class_ref= self.output_files[file_index].classes[class_name]
+            if name in class_ref.attributes:
+                return class_ref.attributes[name].py_var_type
+            elif name in class_ref.vectors:
+                return class_ref.vectors[name].py_var_type
+            elif name in class_ref.tuples:
+                return ['Tuple']
+            
+        
+            elif name in function_ref.parameters:
+                return function_ref.parameters[name].py_var_type
 
-        if name in function_ref.parameters:
-            return function_ref.parameters[name].py_var_type
-
-        elif name in function_ref.variables:
-            return function_ref.variables[name].py_var_type
-        elif name in function_ref.vectors:
-            return function_ref.vectors[name].py_var_type
-        elif name in function_ref.tuples:
-            return ['Tuple']
-
+            elif name in function_ref.variables:
+                return function_ref.variables[name].py_var_type
+            elif name in function_ref.vectors:
+                return function_ref.vectors[name].py_var_type
+            elif name in function_ref.tuples:
+                return ['Tuple']
+            else:
+                raise pcex.VariableNotFound()
+            
         else:
-            raise pcex.VariableNotFound()
+            function_ref = self.output_files[file_index].functions[function_key]
+        
+            if name in function_ref.parameters:
+                return function_ref.parameters[name].py_var_type
+
+            elif name in function_ref.variables:
+                return function_ref.variables[name].py_var_type
+            elif name in function_ref.vectors:
+                return function_ref.vectors[name].py_var_type
+            elif name in function_ref.tuples:
+                return ['Tuple']
+
+            else:
+                raise pcex.VariableNotFound()
     
     def parse_List(self, node, file_index, function_key):
         """
@@ -1502,17 +1641,47 @@ class PyAnalyzer():
 
         # Return the tuple values and their types
         return values, ["Tuple", types]
-        
 
+    def parse_Attribute(self, node, file_index, function_key):
+        """
+        Parse an ast.Attribute node (e.g., self.name) and return the transformed attribute name
+        and its type. Constructs the function name in the format classname::func_name by
+        extracting the class name from function_key using substring operations.
+    
+        Args:
+        node: The ast.Attribute node to parse.
+        file_index: The index of the file being processed.
+        function_key: Identifier for the current function or method context (e.g., 'ClassName.method_name').
+    
+        Returns:
+        tuple: (transformed_name, var_type, func_name)
+               - transformed_name: The attribute name (e.g., 'this->name' for 'self.name').
+               - var_type: The type of the attribute.
+               - func_name: The function name in the format 'classname::func_name'.
+    
+        Raises:
+        pcex.TranslationNotSupported: If class name cannot be extracted, attribute access is unsupported,
+                                      or attribute is undeclared.
+        """
+        # Extract class name and function name from function_key using substring
+        if not isinstance(function_key, str) or '::' not in function_key:
+            raise pcex.TranslationNotSupported("Cannot extract class name from function_key: invalid format")
+    
+        # Split function_key on '.' to get class name and function name
+        parts = function_key.split('::')
+        if len(parts) != 2:
+            raise pcex.TranslationNotSupported("function_key must be in format 'ClassName.method_name'")
+    
+        class_name = parts[0]
+        func_name = parts[1]
 
-    
-    
-            
-            
-    
-        
-        
-        
-        
-        
-    
+        #   Handle attribute access
+        if isinstance(node.value, ast.Name) and node.value.id == "self":
+            # Convert self.name to this->name
+            try:
+                var_type = self.find_var_type(node.attr, file_index, function_key)
+                return f"this->{node.attr}", var_type
+            except pcex.VariableNotFound:
+                raise pcex.TranslationNotSupported(f"Class attribute {node.attr} used before declaration")
+        else:
+            raise pcex.TranslationNotSupported(f"Unsupported attribute access {node.value.id}.{node.attr}")

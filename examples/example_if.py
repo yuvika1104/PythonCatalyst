@@ -8,7 +8,7 @@ if x:
 a = 3
 b = 4.5
 c=4
-if b > a and c>b:
+if b > a or c>b:
     print("B was greater than a")
 elif a > b:
     print("A was greater than a")

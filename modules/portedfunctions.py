@@ -109,6 +109,26 @@ def len_translation(args, arg_types):
         return f"std::tuple_size<decltype({obj})>::value"
     else:
         return f"{obj}.size()"
+    
+def append_translation(args, arg_types):
+    """
+    Translates Python list.append(item) to C++ vector.push_back(item).
+
+    Parameters
+    ----------
+    args : list of str
+        List of arguments to the append function (should contain one item to append).
+    arg_types : list of list of str
+        The types of the arguments.
+    vector_name : str
+        The name of the vector (list) on which append is called.
+
+    Returns
+    -------
+    str
+        The converted push_back statement.
+    """
+    return f"push_back({args[0]})"
 
     
 

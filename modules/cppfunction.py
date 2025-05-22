@@ -64,8 +64,11 @@ class CPPFunction():
         str
             The function's forward declaration
         """
-        
-        function_signature = cvar.CPPVariable.types[self.return_type[0]]
+        ret_type=self.return_type[0]
+        if ret_type =="constructor":
+            function_signature=""
+        else:
+            function_signature = cvar.CPPVariable.types[ret_type]
         function_signature += self.name + "("
         
         if len(self.parameters) > 0:
@@ -85,7 +88,11 @@ class CPPFunction():
         str
             The function's signature
         """
-        function_signature = cvar.CPPVariable.types[self.return_type[0]]
+        ret_type=self.return_type[0]
+        if ret_type =="constructor":
+            function_signature=""
+        else:
+            function_signature = cvar.CPPVariable.types[ret_type]
         # Convert internally named main function to proper name
         if self.name == "0":
             function_signature += "main("

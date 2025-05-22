@@ -70,8 +70,11 @@ class PyTranslator():
             all_lines_dict={}
             for cfunction in file.functions.values():
                 # -merge-two-dictionaries-in-a-single-expression-in-python
-                # -taking-union-o
+                # -taking-union-of
                 all_lines_dict={**all_lines_dict,**cfunction.lines}
+            for c_class in file.classes.values():
+                for method in c_class.methods.values():
+                    all_lines_dict = {**all_lines_dict, **method.lines}
                 
             # Going through all lines in the script we are parsing   
             for index in range(len(raw_lines)):
@@ -111,6 +114,10 @@ class PyTranslator():
             for line in sorted(function.lines.keys()):
                 sorted_lines[line]= function.lines[line]
             function.lines = sorted_lines
+        for c_class in file.classes.values():
+                for method in c_class.methods.values():
+                    sorted_lines = {line: method.lines[line] for line in sorted(method.lines.keys())}
+                    method.lines = sorted_lines
             
     def apply_variable_types(self):
         """
@@ -127,6 +134,13 @@ class PyTranslator():
                     # Prepend line with variable type to apply type
                     cfunction.lines[variable.line_num].code_str \
                         = cvar.CPPVariable.types[variable.py_var_type[0]] + cfunction.lines[variable.line_num].code_str
+                        
+            # Apply types for class attributes
+            for c_class in file.classes.values():
+                for attr in c_class.attributes.values():
+                    if attr.py_var_type[0] == "str":
+                        file.add_include_file("string")
+                    # Attributes are typed in class declaration
     
     def run(self):
         """
