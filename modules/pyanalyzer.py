@@ -8,6 +8,7 @@ from modules import portedfunctions as pf
 from modules import cppvector as cvec
 from modules import cpptuple as ctup
 from modules import cppclass as cclass
+from modules import cppset as cset
 
 class PyAnalyzer():
     """
@@ -27,7 +28,7 @@ class PyAnalyzer():
                     "Or": " || "
                     }
     # Tuple of all functions we have a special conversion from python to C++
-    ported_functions = ("print", "sqrt", "pow","log","len","append")
+    ported_functions = ("print", "sqrt", "pow","log","len","append","add", "remove","discard")
     
     
     # Python Comparison operators translated to C++ operators
@@ -232,6 +233,12 @@ class PyAnalyzer():
             self.output_files[file_index].add_include_file("tuple")
             tuple = ctup.CPPTuple(name=attr_name, elements=assign_str, element_types=assign_type[1])
             class_ref.tuples[attr_name] = tuple
+            
+        elif assign_type[0] =="Set":
+            self.output_files[file_index].add_include_file("unordered_set")
+            set= cset.CPPSet(name= attr_name,py_var_type=assign_type[1], elements=assign_str)
+            class_ref.sets[attr_name]= set
+            class_ref.sets[attr_name]= set
             
         else:
         # Create and add attribute to class
@@ -763,6 +770,15 @@ class PyAnalyzer():
             c_code_line = cline.CPPCodeLine(node.lineno, node.end_lineno,
                                             node.end_col_offset, indent,
                                             code_str)
+        elif assign_type[0] =="Set":
+            self.output_files[file_index].add_include_file("unordered_set")
+            set= cset.CPPSet(name= var_name,py_var_type=assign_type[1], elements=assign_str)
+            function_ref.sets[var_name]= set
+            code_str= set.declaration()
+            c_code_line = cline.CPPCodeLine(node.lineno, node.end_lineno,
+                                            node.end_col_offset, indent,
+                                            code_str)
+            
         else:
             # Find if name exists in context
             try:
@@ -847,7 +863,46 @@ class PyAnalyzer():
                     if len(arg_types) != 1 or arg_types[0][0] != vector.py_var_type[0]:
                         raise pcex.TranslationNotSupported("TODO: append expects one argument of matching vector element type")
                 
-                    self.output_files[file_index].add_include_file("vector")
+                    # self.output_files[file_index].add_include_file("vector")
+                    # Delegate to parse_ported_function with vector context
+                    return_str,return_type=self.parse_ported_function(file_index, function_key, method_name, arg_list, arg_types)
+                    return_str=f"{var_name}.{return_str}"
+                    return return_str,return_type
+                elif method_name == "add" or method_name=="remove" or method_name=="discard":
+                    set = func_ref[function_key].sets.get(var_name)
+                    if not set and '::' in function_key:
+                        class_name = function_key.split('::')[0]
+                        set = self.output_files[file_index].classes[class_name].sets.get(var_name)
+                    if not set:
+                        raise pcex.TranslationNotSupported(f"TODO: {var_name} is not a recognized set")
+                
+                    # Ensure argument type matches vector's element type
+                    if len(arg_types) != 1 or arg_types[0][0] != set.py_var_type[0]:
+                        raise pcex.TranslationNotSupported("TODO: add or remove or discard expects one argument of matching set element type")
+                
+                    # self.output_files[file_index].add_include_file("unordered_set")
+                    # Delegate to parse_ported_function with vector context
+                    return_str,return_type=self.parse_ported_function(file_index, function_key, method_name, arg_list, arg_types)
+                    return_str=f"{var_name}.{return_str}"
+                    return return_str,return_type
+                elif method_name =="clear":
+                    name = func_ref[function_key].vectors.get(var_name)
+                    if not name and '::' in function_key:
+                        class_name = function_key.split('::')[0]
+                        name = self.output_files[file_index].classes[class_name].vectors.get(var_name)
+                    if not name:
+                        name = func_ref[function_key].sets.get(var_name)
+                    
+                    if not name and '::' in function_key:
+                        class_name = function_key.split('::')[0]
+                        name = self.output_files[file_index].classes[class_name].sets.get(var_name)
+                    if not name:
+                        raise pcex.TranslationNotSupported(f"TODO: {var_name} is not a recognized collection")
+                
+                    # Ensure argument type matches vector's element type
+                    if len(arg_types) != 0 :
+                        raise pcex.TranslationNotSupported("TODO: clear expects no argument ")
+            
                     # Delegate to parse_ported_function with vector context
                     return_str,return_type=self.parse_ported_function(file_index, function_key, method_name, arg_list, arg_types)
                     return_str=f"{var_name}.{return_str}"
@@ -935,20 +990,35 @@ class PyAnalyzer():
             return_str = pf.pow_translation(args)
             return_type = ["float"]
             self.output_files[file_index].add_include_file("cmath")
+            
         elif function == "log":
             if len(args) > 2:
                 raise pcex.TranslationNotSupported("TODO: Can't find log using  more than 2 items")
             return_str = pf.log_translation(args)
             return_type = ["float"]
             self.output_files[file_index].add_include_file("cmath")
+            
         elif function == "len":
             if len(args)>1:
                 raise pcex.TranslationNotSupported("TODO: Can't find length using  more than 1 item")
             return_str = pf.len_translation(args,arg_types)
             return_type = ["int"]
+            
         elif function =="append":
             return_str= pf.append_translation(args,arg_types)
-            return_type=arg_types[0]
+            return_type="void"
+            
+        elif function =="add":
+            return_str= pf.add_translation(args, arg_types)
+            return_type="void"
+            
+        elif function =="remove" or function=="discard":
+            return_str= pf.remove_discard_translation(args, arg_types)
+            return_type="void"
+            
+        elif function =="clear":
+            return_str= pf.clear_translation()
+            return_type="void"
 
 
         return return_str, return_type
@@ -1322,6 +1392,8 @@ class PyAnalyzer():
             return self.parse_List(node,file_index,function_key)
         elif node_type is ast.Tuple:
             return self.parse_Tuple(node,file_index,function_key)
+        elif node_type is ast.Set:
+            return self.parse_Set(node,file_index,function_key)
         elif node_type is ast.Subscript:
             try:
                 return self.parse_Subscript(node,file_index,function_key)
@@ -1376,6 +1448,8 @@ class PyAnalyzer():
                 return class_ref.vectors[name].py_var_type
             elif name in class_ref.tuples:
                 return ['Tuple']
+            elif name in class_ref.sets:
+                return['Set']
             
         
             elif name in function_ref.parameters:
@@ -1387,6 +1461,8 @@ class PyAnalyzer():
                 return function_ref.vectors[name].py_var_type
             elif name in function_ref.tuples:
                 return ['Tuple']
+            elif name in function_ref.sets:
+                return['Set']
             else:
                 raise pcex.VariableNotFound()
             
@@ -1402,6 +1478,8 @@ class PyAnalyzer():
                 return function_ref.vectors[name].py_var_type
             elif name in function_ref.tuples:
                 return ['Tuple']
+            elif name in function_ref.sets:
+                return['Set']
 
             else:
                 raise pcex.VariableNotFound()
@@ -1434,7 +1512,7 @@ class PyAnalyzer():
         all_same_type = all(t == common_type for t in types)
         
         if all_same_type:
-            py_var_type=cvar.CPPVariable.types[common_type].strip()
+            py_var_type=common_type
         else:
             raise pcex.TranslationNotSupported("TODO : Hetrogeneous Lists Not Supported")
 
@@ -1685,3 +1763,43 @@ class PyAnalyzer():
                 raise pcex.TranslationNotSupported(f"Class attribute {node.attr} used before declaration")
         else:
             raise pcex.TranslationNotSupported(f"Unsupported attribute access {node.value.id}.{node.attr}")
+        
+        
+        
+    def parse_Set(self, node, file_index, function_key):
+        """
+        Handles parsing an ast.Set node into a CPPSet.
+
+        Parameters
+        ----------
+        node : ast.Set
+            The ast.Set node to be translated.
+        file_index : int
+            Index of the file to write to in the output_files list.
+        function_key : str
+            Key used to find the correct function in the function dictionary.
+
+        Returns
+        -------
+        tuple
+            A tuple containing the values and metadata for the C++ set.
+        """
+        func_ref = self.output_files[file_index].functions[function_key]
+
+        # Parse elements of the set
+        elements = [self.recurse_operator(el, file_index, function_key) for el in node.elts]
+    
+        # Extract data types and values
+        values = [el[0] for el in elements]
+        types = [el[1][0] for el in elements]
+
+        # Check if all types are the same
+        common_type = types[0] if types else "auto"
+        all_same_type = all(t == common_type for t in types) if types else True
+    
+        if not all_same_type:
+            raise pcex.TranslationNotSupported("TODO: Heterogeneous sets not supported")
+    
+        
+    
+        return values, ["Set", common_type]

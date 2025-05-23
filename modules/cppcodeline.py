@@ -89,4 +89,5 @@ class CPPCodeLine():
             # Empty line
             return_str += CPPCodeLine.tab_delimiter * self.indent
             
+        return_str+="\n"
         return return_str

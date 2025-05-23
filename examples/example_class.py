@@ -3,6 +3,8 @@ class MyClass:
         self.x = [1,2,3,4]
         self.t=(1,"abc",8)
         self.name = "test"
+        self.s= {1,2,3,4,5}
+        self.d=9
 
     def greet(self):
         a=5
@@ -10,6 +12,7 @@ class MyClass:
         c=[1,2,3,4]
         if(a>b):
             print("Bye")
+        print(self.d)
         print(self.name)
 class MyClass2(MyClass):
     def __init__(self):

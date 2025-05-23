@@ -8,6 +8,10 @@ def add(val_a, val_b):
     :param val_b: Second value to add
     :return: The sum of a and b
     """
+    t=[1,2,3]
+    print(t[1])
+    s={'a','b','c'}
+    s.clear()
     return val_a + val_b
 
 

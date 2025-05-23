@@ -130,7 +130,48 @@ def append_translation(args, arg_types):
     """
     return f"push_back({args[0]})"
 
+def add_translation(args, arg_types):
+    """
+    Translates Python set.add(item) to C++ unordred_set.insert(item).
+
+    Parameters
+    ----------
+    args : list of str
+        List of arguments to the append function (should contain one item to append).
+    arg_types : list of list of str
+        The types of the arguments.
+    vector_name : str
+        The name of the set  on which append is called.
+
+    Returns
+    -------
+    str
+        The converted push_back statement.
+    """
+    return f"insert({args[0]})"
+
+def remove_discard_translation(args, arg_types):
+    """
+    Translates Python set.add(item) to C++ unordred_set.insert(item).
+
+    Parameters
+    ----------
+    args : list of str
+        List of arguments to the append function (should contain one item to append).
+    arg_types : list of list of str
+        The types of the arguments.
+    vector_name : str
+        The name of the set  on which append is called.
+
+    Returns
+    -------
+    str
+        The converted push_back statement.
+    """
+    return f"erase({args[0]})"
     
+def clear_translation():
+    return "clear()"
 
     
 

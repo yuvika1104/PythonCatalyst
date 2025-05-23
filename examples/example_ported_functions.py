@@ -14,3 +14,10 @@ print(len(s))
 
 l = [1, 2, 3]
 print(len(l))
+l.clear()
+
+st={'a','b','c'}
+st.add('d')
+st.remove('a')
+print(len(st))
+st.clear()

@@ -32,6 +32,7 @@ class CPPClass:
         self.methods = {}     # Dictionary of {str: CPPFunction} for class methods
         self.vectors = {}     # Dictionary for vector attributes
         self.tuples = {}      # Dictionary for tuple attributes
+        self.sets= {}
 
     def add_attribute(self, variable):
         """
@@ -94,6 +95,9 @@ class CPPClass:
         for tup in self.tuples.values():
             tup_decl= tup.declaration()
             class_text+=f"{cline.CPPCodeLine.tab_delimiter}{ tup_decl}\n"
+        for set in self.sets.values():
+            set_decl= set.declaration()
+            class_text+=f"{cline.CPPCodeLine.tab_delimiter}{ set_decl}\n"
 
         # Add methods
         for method in self.methods.values():

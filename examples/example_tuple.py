@@ -6,5 +6,4 @@ x=a[2]
 
 l=a[1]
 
-
 print(len(a))
