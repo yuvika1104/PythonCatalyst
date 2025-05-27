@@ -238,7 +238,6 @@ class PyAnalyzer():
             self.output_files[file_index].add_include_file("unordered_set")
             set= cset.CPPSet(name= attr_name,py_var_type=assign_type[1], elements=assign_str)
             class_ref.sets[attr_name]= set
-            class_ref.sets[attr_name]= set
             
         else:
         # Create and add attribute to class

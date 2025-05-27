@@ -12,6 +12,7 @@ class MyClass:
         c=[1,2,3,4]
         if(a>b):
             print("Bye")
+        print(len(self.s))
         print(self.d)
         print(self.name)
 class MyClass2(MyClass):
@@ -19,8 +20,8 @@ class MyClass2(MyClass):
         self.v=10.5
     def salute(self):
         print("BYE")
-def heloooooooooooo():
+def hello():
   print("Hi")
   return 5
 
-x=heloooooooooooo()
+x=hello()
